@@ -12,7 +12,6 @@ HOST = os.environ.get("KEYCHAIN_HOST", "0.0.0.0")
 PORT = int(os.environ.get("KEYCHAIN_PORT", "80"))
 TLS_CERT = os.environ.get("KEYCHAIN_TLS_CERT", "")
 TLS_KEY = os.environ.get("KEYCHAIN_TLS_KEY", "")
-COOKIE_SECURE = "; Secure" if TLS_CERT and TLS_KEY else ""
 SESSION_AGE = 15 * 60
 MAX_BODY = 1024 * 1024
 attempts = {}
@@ -67,6 +66,11 @@ def pw_ok(password, stored):
 def b64(b): return base64.urlsafe_b64encode(b).decode().rstrip("=")
 def unb64(s): return base64.urlsafe_b64decode(s+"="*(-len(s)%4))
 def token_hash(token):return hashlib.sha256(token.encode()).hexdigest()
+def cookie(name,value,max_age,http_only=False):
+    parts=[f"{name}={value}","Path=/","SameSite=Strict",f"Max-Age={max_age}"]
+    if http_only:parts.append("HttpOnly")
+    if TLS_CERT and TLS_KEY:parts.append("Secure")
+    return "; ".join(parts)
 def session(uid,ip="",user_agent=""):
     token=b64(secrets.token_bytes(32)); now=int(time.time())
     with db() as c:
@@ -227,7 +231,7 @@ class App(BaseHTTPRequestHandler):
             expires=int(time.time())+SESSION_AGE
             token=self.session_token()
             with db() as c:c.execute("UPDATE sessions SET last_activity=?,expires=? WHERE token_hash=? AND revoked=0",(int(time.time()),expires,token_hash(token)))
-            return self.send(200,json.dumps({"expires":expires,"csrf":csrf_token(user["id"])}),"application/json",[("Set-Cookie",f"kc_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_AGE}{COOKIE_SECURE}")])
+            return self.send(200,json.dumps({"expires":expires,"csrf":csrf_token(user["id"])}),"application/json",[("Set-Cookie",cookie("kc_session",token,SESSION_AGE,True))])
         self.send(404,"Not found")
     def card(self,r,csrf,user):
         try: secret=dec(r["secret"])
@@ -269,13 +273,13 @@ class App(BaseHTTPRequestHandler):
             with db() as c:u=c.execute("SELECT * FROM users WHERE username=? AND active=1",(f.get("username",""),)).fetchone()
             if not u or not pw_ok(f.get("password",""),u["passhash"]): recent.append(time.time()); time.sleep(.4); return self.send(401,layout("Sign in","<section class=login><h1>Sign-in failed</h1><p>Incorrect username or password.</p><a href=/ class=button>Try again</a></section>"))
             with db() as c: audit(c,u,"Sign in",ip=self.client_address[0])
-            attempts.pop(ip,None); csrf=b64(secrets.token_bytes(24)); token=session(u["id"],ip,self.headers.get("User-Agent","")); hdr=[("Set-Cookie",f"kc_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_AGE}{COOKIE_SECURE}"),("Set-Cookie",f"kc_csrf={csrf}; SameSite=Strict; Path=/; Max-Age={SESSION_AGE}{COOKIE_SECURE}")]
+            attempts.pop(ip,None); csrf=b64(secrets.token_bytes(24)); token=session(u["id"],ip,self.headers.get("User-Agent","")); hdr=[("Set-Cookie",cookie("kc_session",token,SESSION_AGE,True)),("Set-Cookie",cookie("kc_csrf",csrf,SESSION_AGE))]
             return self.redirect("/vault",hdr)
         user,f=self.require_post(f)
         if not user:return
         if path=="/logout":
             with db() as c:c.execute("UPDATE sessions SET revoked=1 WHERE token_hash=?",(token_hash(self.session_token()),))
-            return self.redirect("/",[("Set-Cookie",f"kc_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{COOKIE_SECURE}"),("Set-Cookie",f"kc_csrf=; SameSite=Strict; Path=/; Max-Age=0{COOKIE_SECURE}")])
+            return self.redirect("/",[("Set-Cookie",cookie("kc_session","",0,True)),("Set-Cookie",cookie("kc_csrf","",0))])
         if path=="/item":
             if not f.get("title") or not f.get("secret"):return self.send(400,"Title or secret is missing")
             if f.get("totp_secret"):
@@ -377,11 +381,11 @@ class App(BaseHTTPRequestHandler):
                 if not s:return self.send(404,"The session does not exist")
                 if s["user_id"]!=user["id"] and not user["is_admin"]:return self.send(403,"The session cannot be revoked")
                 c.execute("UPDATE sessions SET revoked=1 WHERE id=?",(s["id"],)); audit(c,user,"Session revoked",s["username"],s["ip"],self.client_address[0])
-            if s["token_hash"]==token_hash(self.session_token()):return self.redirect("/",[("Set-Cookie",f"kc_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{COOKIE_SECURE}")])
+            if s["token_hash"]==token_hash(self.session_token()):return self.redirect("/",[("Set-Cookie",cookie("kc_session","",0,True))])
             return self.redirect("/sessions")
         self.send(404,"Not found")
 
-if __name__=="__main__":
+def serve():
     if bool(TLS_CERT) != bool(TLS_KEY):
         raise SystemExit("KEYCHAIN_TLS_CERT and KEYCHAIN_TLS_KEY must be configured together")
     init(); server=ThreadingHTTPServer((HOST,PORT),App); scheme="http"
@@ -389,3 +393,5 @@ if __name__=="__main__":
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.minimum_version=ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(TLS_CERT,TLS_KEY); server.socket=context.wrap_socket(server.socket,server_side=True); scheme="https"
     print(f"Keychain is running at {scheme}://{HOST}:{PORT}"); server.serve_forever()
+
+if __name__=="__main__":serve()
