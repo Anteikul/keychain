@@ -72,10 +72,43 @@ The application creates `keychain.db` and `.device-key` in the project directory
 | `KEYCHAIN_PORT` | `80` | Listening port |
 | `KEYCHAIN_DB` | `./keychain.db` | SQLite database path |
 | `KEYCHAIN_KEY` | `./.device-key` | AES encryption key path |
+| `KEYCHAIN_TLS_CERT` | unset | PEM TLS certificate or full-chain path |
+| `KEYCHAIN_TLS_KEY` | unset | PEM TLS private-key path |
 | `KEYCHAIN_BACKUP_DIR` | `./backups` | Backup destination |
 | `KEYCHAIN_BACKUP_KEEP` | `14` | Number of backup archives retained |
 
 The Docker image overrides the listening port to `8080` and stores persistent files under `/data`.
+
+## HTTPS with TLS certificates
+
+Keychain can terminate HTTPS directly. Set both TLS variables; the application refuses to start if only one is provided. The certificate file should contain the server certificate followed by any intermediate certificates required by clients. The private key must be readable by the account running Keychain and should have restrictive permissions.
+
+```bash
+KEYCHAIN_HOST=0.0.0.0 \
+KEYCHAIN_PORT=8443 \
+KEYCHAIN_TLS_CERT=/etc/keychain/fullchain.pem \
+KEYCHAIN_TLS_KEY=/etc/keychain/privkey.pem \
+python3 app.py
+```
+
+Then open `https://your-host.example:8443`. When native TLS is enabled, Keychain marks its session and CSRF cookies as `Secure`. TLS 1.2 is the minimum accepted protocol version.
+
+For Docker Compose, mount a certificate directory read-only and pass the paths into the container:
+
+```yaml
+services:
+  keychain:
+    ports:
+      - "8443:8080"
+    environment:
+      KEYCHAIN_TLS_CERT: /certs/fullchain.pem
+      KEYCHAIN_TLS_KEY: /certs/privkey.pem
+    volumes:
+      - keychain-data:/data
+      - ./certs:/certs:ro
+```
+
+Certificates renewed on the host are used after the container or service is restarted. A reverse proxy may still be preferable when automatic certificate issuance and renewal are required; in that setup, leave the TLS variables unset and keep Keychain reachable only from the proxy.
 
 ## Backups and recovery
 
