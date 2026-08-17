@@ -1,0 +1,21 @@
+# Runtime secrets and data
+keychain.db
+keychain.db-shm
+keychain.db-wal
+.device-key
+backups/
+
+# TLS and environment files
+*.key
+*.pem
+.env
+.env.*
+!.env.example
+
+# Python and editor artifacts
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+.vscode/
+.DS_Store

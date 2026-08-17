@@ -12,6 +12,7 @@ HOST = os.environ.get("KEYCHAIN_HOST", "0.0.0.0")
 PORT = int(os.environ.get("KEYCHAIN_PORT", "80"))
 TLS_CERT = os.environ.get("KEYCHAIN_TLS_CERT", "")
 TLS_KEY = os.environ.get("KEYCHAIN_TLS_KEY", "")
+SECURE_COOKIES = os.environ.get("KEYCHAIN_SECURE_COOKIES", "").strip().lower() in ("1", "true", "yes", "on") or bool(TLS_CERT)
 SESSION_AGE = 15 * 60
 MAX_BODY = 1024 * 1024
 attempts = {}
@@ -61,7 +62,9 @@ def init():
 def audit(c, user, action, target="", detail="", ip=""):
     c.execute("INSERT INTO audit(user_id,username,action,target,detail,ip,created) VALUES(?,?,?,?,?,?,?)",(user["id"] if user else None,user["username"] if user else "system",action,target,detail,ip,int(time.time())))
 
-def key(): return open(KEY_PATH, "rb").read()
+def key():
+    with open(KEY_PATH, "rb") as key_file:
+        return key_file.read()
 def enc(value):
     nonce=secrets.token_bytes(12); return nonce + AESGCM(key()).encrypt(nonce, value.encode(), b"keychain-v1")
 def dec(value): return AESGCM(key()).decrypt(value[:12], value[12:], b"keychain-v1").decode()
@@ -117,7 +120,7 @@ class App(BaseHTTPRequestHandler):
     server_version="Keychain"
     def log_message(self, fmt, *args): print(time.strftime("%F %T"), self.client_address[0], fmt%args)
     def send_header(self, keyword, value):
-        if keyword.lower()=="set-cookie" and TLS_CERT and "secure" not in value.lower():value+="; Secure"
+        if keyword.lower()=="set-cookie" and SECURE_COOKIES and "secure" not in value.lower():value+="; Secure"
         super().send_header(keyword,value)
     def send(self, code, body, ctype="text/html; charset=utf-8", headers=None):
         data=body.encode(); self.send_response(code); self.send_header("Content-Type",ctype); self.send_header("Content-Length",str(len(data)))
@@ -152,11 +155,6 @@ class App(BaseHTTPRequestHandler):
         if path=="/static.css": return self.send(200,open(os.path.join(ROOT,"static.css")).read(),"text/css")
         if path=="/app.js": return self.send(200,open(os.path.join(ROOT,"app.js")).read(),"text/javascript")
         if path in ("/favicon.svg","/favicon.ico","/apple-touch-icon.png","/apple-touch-icon-precomposed.png"): return self.send(200,open(os.path.join(ROOT,"favicon.svg")).read(),"image/svg+xml")
-        if path=="/icon":
-            icon_id=parse_qs(urlparse(self.path).query).get("id",[""])[0]
-            with db() as c:r=c.execute("SELECT mime,data FROM icons WHERE id=?",(icon_id,)).fetchone()
-            if not r:return self.send(404,"Not found")
-            data=bytes(r["data"]); self.send_response(200); self.send_header("Content-Type",r["mime"]); self.send_header("Content-Length",str(len(data))); self.send_header("Cache-Control","public, max-age=31536000, immutable"); self.send_header("X-Content-Type-Options","nosniff"); self.end_headers(); return self.wfile.write(data)
         user=self.auth()
         if path=="/":
             if user:return self.redirect("/vault")
@@ -165,6 +163,11 @@ class App(BaseHTTPRequestHandler):
             body=f'''<section class=login><div class=mark>⌁</div><h1>Keychain</h1><p>{sub}</p><form method=post action={'/setup' if first else '/login'}><label>Username<input name=username required autocomplete=username autofocus></label><label>Password<input type=password name=password required minlength=8 autocomplete={'new-password' if first else 'current-password'}></label><button>{label}</button></form></section>'''
             return self.send(200,layout("Sign in",body))
         if not user:return self.redirect("/")
+        if path=="/icon":
+            icon_id=parse_qs(urlparse(self.path).query).get("id",[""])[0]
+            with db() as c:r=c.execute("SELECT mime,data FROM icons WHERE id=?",(icon_id,)).fetchone()
+            if not r:return self.send(404,"Not found")
+            data=bytes(r["data"]); self.send_response(200); self.send_header("Content-Type",r["mime"]); self.send_header("Content-Length",str(len(data))); self.send_header("Cache-Control","private, max-age=31536000, immutable"); self.send_header("X-Content-Type-Options","nosniff"); self.end_headers(); return self.wfile.write(data)
         csrf=csrf_token(user["id"])
         if path=="/vault":
             with db() as c:
@@ -264,7 +267,7 @@ class App(BaseHTTPRequestHandler):
         folder_list=''.join(f'<option value="{esc(x)}">' for x in folders)
         return f'''<dialog id=add><form method=post action=/item><div class=dialoghead><div><p class=eyebrow>VAULT ITEM</p><h2 data-dialog-title>Add credential</h2></div><button type=button class=close data-close>×</button></div><input type=hidden name=csrf value="{csrf}"><input type=hidden name=id><input type=hidden name=icon_id><input type=hidden name=icon_data><label>Icon <span class=optional>(shared library)</span><div class=icon-picker><label class=icon-upload title="Upload a new icon">＋<input type=file accept="image/png,image/jpeg,image/gif,image/webp" data-icon-file></label><button type=button class="icon-choice upload-preview" data-upload-preview hidden><img alt="New icon preview"></button>{choices}</div><small>PNG, JPG, GIF, or WebP, up to 256 kB</small></label><label>Title<input name=title required placeholder="For example, Company email"></label><div class=field-row><label>Folder<input name=folder list=folders placeholder="For example, Servers"><datalist id=folders>{folder_list}</datalist></label><label>Tags<input name=tags placeholder="proxmox, production"></label></div><label>Username<input name=login autocomplete=off></label><label>Password<div class=password-field><input name=secret required autocomplete=off><button type=button class=ghost data-generate-password>Generate</button></div><span class=generator-options><label>Length <input type=number min=12 max=64 value=20 data-password-length></label><label class=check><input type=checkbox checked data-password-symbols> Symbols</label></span></label><label>TOTP secret <span class=optional>(optional, Base32)</span><input name=totp_secret autocomplete=off placeholder="JBSWY3DPEHPK3PXP"></label><label>Website<input name=url type=url></label><label>Note<textarea name=notes></textarea></label><label class=check><input type=checkbox name=shared value=1><span>Share with all users</span></label><button data-save>Save encrypted</button></form></dialog>'''
     def delete_dialog(self,csrf):
-        return f'''<dialog id=delete-confirm><form method=post action=/delete><div class=dialoghead><div><p class="eyebrow danger-text">IRREVERSIBLE ACTION</p><h2>Delete item?</h2></div><button type=button class=close data-delete-close>×</button></div><p>Item <strong data-delete-name></strong> will be permanently deleted. To confirm, enter its title:</p><input type=hidden name=csrf value="{csrf}"><input type=hidden name=id><label>Item title<input name=confirmation required autocomplete=off data-delete-input></label><div class=dialog-actions><button type=button class=ghost data-delete-close>Cancel</button><button class=danger data-delete-submit disabled>Delete permanently</button></div></form></dialog>'''
+        return f'''<dialog id=delete-confirm><form method=post action=/delete><div class=dialoghead><div><p class="eyebrow danger-text">CONFIRM ACTION</p><h2>Move item to trash?</h2></div><button type=button class=close data-delete-close>×</button></div><p>Item <strong data-delete-name></strong> will be hidden and can be restored by an administrator. To confirm, enter its title:</p><input type=hidden name=csrf value="{csrf}"><input type=hidden name=id><label>Item title<input name=confirmation required autocomplete=off data-delete-input></label><div class=dialog-actions><button type=button class=ghost data-delete-close>Cancel</button><button class=danger data-delete-submit disabled>Move to trash</button></div></form></dialog>'''
     def do_POST(self):
         try:f=self.form()
         except Exception:return self.send(413,"Request too large")
@@ -395,4 +398,7 @@ class App(BaseHTTPRequestHandler):
         self.send(404,"Not found")
 
 if __name__=="__main__":
-    init(); print(f"Keychain is running at http://{HOST}:{PORT}"); ThreadingHTTPServer((HOST,PORT),App).serve_forever()
+    init()
+    server,scheme=create_server()
+    print(f"Keychain is running at {scheme}://{HOST}:{PORT}")
+    server.serve_forever()

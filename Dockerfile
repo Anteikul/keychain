@@ -13,7 +13,7 @@ RUN groupadd --system keychain && useradd --system --gid keychain --home-dir /ap
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py app.js static.css favicon.svg ./
+COPY app.py app.js static.css favicon.svg backup.py ./
 
 USER keychain
 VOLUME ["/data"]

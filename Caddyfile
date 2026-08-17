@@ -1,0 +1,8 @@
+{
+	email {$KEYCHAIN_EMAIL}
+}
+
+{$KEYCHAIN_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy keychain:8080
+}
