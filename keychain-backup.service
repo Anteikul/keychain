@@ -1,0 +1,15 @@
+[Unit]
+Description=Encrypted Keychain local backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/keychain
+ExecStart=/usr/bin/python3 /opt/keychain/backup.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/keychain/backups
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
