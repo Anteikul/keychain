@@ -395,4 +395,4 @@ class App(BaseHTTPRequestHandler):
         self.send(404,"Not found")
 
 if __name__=="__main__":
-    init(); server,scheme=create_server(); print(f"Keychain is running at {scheme}://{HOST}:{PORT}"); server.serve_forever()
+    init(); print(f"Keychain is running at http://{HOST}:{PORT}"); ThreadingHTTPServer((HOST,PORT),App).serve_forever()
