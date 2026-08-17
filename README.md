@@ -211,5 +211,4 @@ be the only place where deployment definitions exist.
 
 ## License
 
-No license has been selected. Without an explicit license, copyright law reserves
-all rights to the author.
+Keychain is available under the [MIT License](LICENSE).
