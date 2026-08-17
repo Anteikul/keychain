@@ -72,10 +72,43 @@ The application creates `keychain.db` and `.device-key` in the project directory
 | `KEYCHAIN_PORT` | `80` | Listening port |
 | `KEYCHAIN_DB` | `./keychain.db` | SQLite database path |
 | `KEYCHAIN_KEY` | `./.device-key` | AES encryption key path |
+| `KEYCHAIN_TLS_CERT` | unset | PEM TLS certificate or full-chain path |
+| `KEYCHAIN_TLS_KEY` | unset | PEM TLS private-key path |
 | `KEYCHAIN_BACKUP_DIR` | `./backups` | Backup destination |
 | `KEYCHAIN_BACKUP_KEEP` | `14` | Number of backup archives retained |
 
 The Docker image overrides the listening port to `8080` and stores persistent files under `/data`.
+
+## HTTPS with TLS certificates
+
+Set both TLS variables to terminate HTTPS directly in Keychain. The application rejects incomplete TLS configuration. The certificate file may include the server certificate and intermediate certificates; protect the private key and make it readable by the service account.
+
+```bash
+KEYCHAIN_HOST=0.0.0.0 \
+KEYCHAIN_PORT=8443 \
+KEYCHAIN_TLS_CERT=/etc/keychain/fullchain.pem \
+KEYCHAIN_TLS_KEY=/etc/keychain/privkey.pem \
+python3 app.py
+```
+
+Native HTTPS requires TLS 1.2 or newer and automatically adds `Secure` to every application cookie.
+
+With Docker Compose, mount the certificates read-only and configure their container paths:
+
+```yaml
+services:
+  keychain:
+    ports:
+      - "8443:8080"
+    environment:
+      KEYCHAIN_TLS_CERT: /certs/fullchain.pem
+      KEYCHAIN_TLS_KEY: /certs/privkey.pem
+    volumes:
+      - keychain-data:/data
+      - ./certs:/certs:ro
+```
+
+Restart the service after renewing a certificate. For automatic certificate management, use an HTTPS reverse proxy and leave these variables unset.
 
 ## Backups and recovery
 

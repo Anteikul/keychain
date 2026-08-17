@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64, hashlib, hmac, html, json, os, secrets, sqlite3, struct, time
+import base64, hashlib, hmac, html, json, os, secrets, sqlite3, ssl, struct, time
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -10,9 +10,22 @@ DB_PATH = os.environ.get("KEYCHAIN_DB", os.path.join(ROOT, "keychain.db"))
 KEY_PATH = os.environ.get("KEYCHAIN_KEY", os.path.join(ROOT, ".device-key"))
 HOST = os.environ.get("KEYCHAIN_HOST", "0.0.0.0")
 PORT = int(os.environ.get("KEYCHAIN_PORT", "80"))
+TLS_CERT = os.environ.get("KEYCHAIN_TLS_CERT", "")
+TLS_KEY = os.environ.get("KEYCHAIN_TLS_KEY", "")
 SESSION_AGE = 15 * 60
 MAX_BODY = 1024 * 1024
 attempts = {}
+
+def create_server():
+    if bool(TLS_CERT) != bool(TLS_KEY):
+        raise ValueError("KEYCHAIN_TLS_CERT and KEYCHAIN_TLS_KEY must be configured together")
+    server=ThreadingHTTPServer((HOST,PORT),App)
+    if not TLS_CERT:return server,"http"
+    context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version=ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(certfile=TLS_CERT,keyfile=TLS_KEY)
+    server.socket=context.wrap_socket(server.socket,server_side=True)
+    return server,"https"
 
 def db():
     c = sqlite3.connect(DB_PATH)
@@ -103,6 +116,9 @@ def layout(title, body, user=None, csrf="", expires=0):
 class App(BaseHTTPRequestHandler):
     server_version="Keychain"
     def log_message(self, fmt, *args): print(time.strftime("%F %T"), self.client_address[0], fmt%args)
+    def send_header(self, keyword, value):
+        if keyword.lower()=="set-cookie" and TLS_CERT and "secure" not in value.lower():value+="; Secure"
+        super().send_header(keyword,value)
     def send(self, code, body, ctype="text/html; charset=utf-8", headers=None):
         data=body.encode(); self.send_response(code); self.send_header("Content-Type",ctype); self.send_header("Content-Length",str(len(data)))
         self.send_header("Cache-Control","no-store")
