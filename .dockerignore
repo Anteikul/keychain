@@ -1,0 +1,12 @@
+.git
+.gitignore
+.github
+.device-key
+keychain.db*
+backups
+.env*
+*.key
+*.pem
+__pycache__
+*.py[cod]
+.venv

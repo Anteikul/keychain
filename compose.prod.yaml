@@ -1,0 +1,48 @@
+services:
+  keychain:
+    build: .
+    image: keychain:local
+    restart: unless-stopped
+    environment:
+      KEYCHAIN_HOST: "0.0.0.0"
+      KEYCHAIN_PORT: "8080"
+      KEYCHAIN_DB: "/data/keychain.db"
+      KEYCHAIN_KEY: "/data/.device-key"
+      KEYCHAIN_BACKUP_DIR: "/data/backups"
+      KEYCHAIN_BACKUP_KEEP: "14"
+      KEYCHAIN_SECURE_COOKIES: "true"
+    volumes:
+      - keychain-data:/data
+    networks:
+      - private
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      keychain:
+        condition: service_healthy
+    environment:
+      KEYCHAIN_DOMAIN: "${KEYCHAIN_DOMAIN:?Set KEYCHAIN_DOMAIN in .env}"
+      KEYCHAIN_EMAIL: "${KEYCHAIN_EMAIL:?Set KEYCHAIN_EMAIL in .env}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - private
+      - edge
+
+volumes:
+  keychain-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  private:
+    internal: true
+  edge:
